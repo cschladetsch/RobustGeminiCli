@@ -1,0 +1,88 @@
+#!/home/xian/.local/share/pipx/venvs/gemini-cli/bin/python
+
+"""
+A robust command-line interface for Google's Gemini models.
+- Takes a prompt as a command-line argument.
+- Uses the GOOGLE_API_KEY environment variable for authentication.
+- If the default model is not found, it interactively lists available models
+  for the user to choose from and retries the request.
+- Gracefully handles API quota errors.
+"""
+import sys
+import os
+import google.generativeai as genai
+from google.api_core import exceptions
+
+# --- Configuration ---
+DEFAULT_MODEL = "gemini-1.5-pro-latest"
+# --- End Configuration ---
+
+def generate_content_with_model(model_name, prompt_text):
+    """Attempts to generate content with a specific model."""
+    print(f"--> Using model: {model_name}\n")
+    model = genai.GenerativeModel(model_name)
+    response = model.generate_content(prompt_text)
+    print(response.text)
+
+def main():
+    """Main function to run the Gemini CLI tool."""
+    # 1. Get API Key
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("Error: GOOGLE_API_KEY environment variable not set.")
+        sys.exit(1)
+    genai.configure(api_key=api_key)
+
+    # 2. Get Prompt
+    if len(sys.argv) < 2:
+        print(f"Usage: {sys.argv[0]} \"Your prompt here\"")
+        sys.exit(1)
+    prompt = sys.argv[1]
+
+    # 3. Try to generate content with the default model
+    try:
+        generate_content_with_model(DEFAULT_MODEL, prompt)
+
+    except exceptions.NotFound as e:
+        # This error (404) means the default model wasn't found.
+        print(f"The default model '{DEFAULT_MODEL}' was not found.")
+        print("Let's find a model that works for your API key...")
+
+        # Get a list of available models that support content generation
+        available_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name.split('/')[1])
+
+        if not available_models:
+            print("Sorry, no usable models were found for your API key.")
+            sys.exit(1)
+
+        # Let the user choose from the list
+        print("\nPlease choose a model from the list below:")
+        for i, model_name in enumerate(available_models):
+            print(f"  {i + 1}: {model_name}")
+
+        try:
+            choice = int(input(f"\nEnter number (1-{len(available_models)}): "))
+            if 1 <= choice <= len(available_models):
+                chosen_model = available_models[choice - 1]
+                # Retry generating content with the user's chosen model
+                generate_content_with_model(chosen_model, prompt)
+            else:
+                print("Invalid choice.")
+        except (ValueError, IndexError):
+            print("Invalid input. Please run the script again.")
+
+    except exceptions.ResourceExhausted as e:
+        # This error (429) means you've hit a rate limit.
+        print("\nError: You have exceeded your API quota.")
+        print("Please wait a minute and try again, or check your plan and billing details.")
+        print("More info: https://ai.google.dev/gemini-api/docs/rate-limits")
+
+    except Exception as e:
+        # Catch any other unexpected errors
+        print(f"\nAn unexpected error occurred: {e}")
+
+if __name__ == "__main__":
+    main()
